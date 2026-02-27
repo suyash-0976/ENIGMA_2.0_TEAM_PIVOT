@@ -1,0 +1,498 @@
+import React, { useState, useRef, useMemo } from 'react';
+import { Upload, Activity, Brain, FileText, Download, Scan, PlusCircle, ArrowLeft, FolderOpen } from 'lucide-react';
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, Cell } from 'recharts';
+import html2canvas from 'html2canvas';
+import jsPDF from 'jspdf';
+
+function App() {
+  const [view, setView] = useState<'home' | 'form' | 'result'>('home');
+  const [file, setFile] = useState<File | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<any>(null);
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+
+  const [patientName, setPatientName] = useState("");
+  const [patientAge, setPatientAge] = useState("");
+  const [patientGender, setPatientGender] = useState("");
+  const [patientId, setPatientId] = useState("");
+
+  const printReportRef = useRef<HTMLDivElement>(null);
+
+  // SAFE CSS-ONLY PARTICLE LOGIC
+  const particles = useMemo(() => {
+    return Array.from({ length: 50 }).map((_, i) => ({
+      id: i,
+      size: Math.random() * 3 + 1, // 1px to 4px
+      left: Math.random() * 100, // 0 to 100% width
+      top: Math.random() * 100, // 0 to 100% height
+      duration: Math.random() * 15 + 10, // 10s to 25s
+      delay: Math.random() * -20, // Start randomly
+      opacity: Math.random() * 0.5 + 0.2 // Light glow
+    }));
+  }, []);
+
+  const startNewPatient = () => {
+    setPatientId(`NS-${Math.floor(Math.random() * 9000) + 1000}`);
+    setPatientName("");
+    setPatientAge("");
+    setPatientGender("");
+    setFile(null);
+    setResult(null);
+    setView('form');
+  };
+
+  const openExistingFolder = () => {
+    alert("System Note: Connect to backend database to fetch existing clinical folders.");
+  };
+
+  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      const selectedFile = e.target.files[0];
+      setFile(selectedFile);
+      
+      const formData = new FormData();
+      formData.append('file', selectedFile);
+      formData.append('patientId', patientId);
+      formData.append('patientAge', patientAge || 'N/A');
+      formData.append('patientGender', patientGender || 'N/A');
+
+      setLoading(true);
+      try {
+        const response = await fetch('http://localhost:5005/api/analyze', {
+          method: 'POST',
+          body: formData,
+        });
+        const data = await response.json();
+        setResult(data);
+        setView('result');
+      } catch (error) {
+        alert("Server Error! Check if backend is running on port 5005.");
+      } finally {
+        setLoading(false);
+      }
+    }
+  };
+
+  const generatePDF = async () => {
+    const element = printReportRef.current;
+    if (!element) return;
+    setIsGeneratingPdf(true);
+    try {
+      const canvas = await html2canvas(element, { scale: 2, backgroundColor: '#ffffff', windowWidth: 800 });
+      const imgData = canvas.toDataURL('image/png');
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+      pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
+      pdf.save(`NeuroScan_Report_${patientId}.pdf`);
+    } finally {
+      setIsGeneratingPdf(false);
+    }
+  };
+
+  const getBandData = () => {
+    if (!result || !result.metrics || !result.metrics.bands_relative_power) return [];
+    const bands = result.metrics.bands_relative_power;
+    return [
+        { name: 'Delta', power: bands.Delta * 100 },
+        { name: 'Theta', power: bands.Theta * 100 },
+        { name: 'Alpha', power: bands.Alpha * 100 },
+        { name: 'Beta', power: bands.Beta * 100 },
+        { name: 'Gamma', power: bands.Gamma * 100 }
+    ];
+  };
+
+  const getActiveRegion = () => {
+    if (!result) return { lobe: 'None', nodes: [], color: 'bg-slate-700', text: 'text-slate-500', desc: '' };
+    if (result.risk_score > 75) return { lobe: 'Frontal Lobe', nodes: ['Fp1', 'Fp2'], color: 'bg-red-500', glow: 'shadow-[0_0_15px_#ef4444]', text: 'text-red-400', desc: 'Gamma Hyper-activity Detected' };
+    else if (result.risk_score > 40) return { lobe: 'Temporal Lobe', nodes: ['T3', 'T4'], color: 'bg-orange-500', glow: 'shadow-[0_0_15px_#f97316]', text: 'text-orange-400', desc: 'Elevated Waveforms' };
+    else return { lobe: 'Occipital Lobe', nodes: ['O1', 'O2'], color: 'bg-green-500', glow: 'shadow-[0_0_15px_#22c55e]', text: 'text-green-400', desc: 'Healthy Alpha State' };
+  };
+
+  const activeRegion = getActiveRegion();
+
+  const mapNodes = [
+    { id: 'Fp1', pos: 'top-4 left-10' }, { id: 'Fp2', pos: 'top-4 right-10' },
+    { id: 'T3', pos: 'top-1/2 left-0 -translate-y-1/2' }, { id: 'T4', pos: 'top-1/2 right-0 -translate-y-1/2' },
+    { id: 'C3', pos: 'top-1/2 left-10 -translate-y-1/2' }, { id: 'C4', pos: 'top-1/2 right-10 -translate-y-1/2' },
+    { id: 'Cz', pos: 'top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2' },
+    { id: 'O1', pos: 'bottom-6 left-10' }, { id: 'O2', pos: 'bottom-6 right-10' },
+  ];
+
+  return (
+    <div className="h-screen bg-[#050B14] text-white font-sans overflow-hidden flex flex-col relative">
+      
+      {/* CSS For Particles */}
+      <style>{`
+        @keyframes particle-flow {
+          0% { transform: translateY(0) translateX(0); opacity: 0; }
+          10% { opacity: var(--max-opacity); }
+          90% { opacity: var(--max-opacity); }
+          100% { transform: translateY(-100vh) translateX(50px); opacity: 0; }
+        }
+        .particle {
+          position: absolute;
+          background: #22d3ee;
+          border-radius: 50%;
+          animation: particle-flow linear infinite;
+        }
+      `}</style>
+
+      {/* Background Glow */}
+      <div className="absolute inset-0 z-0 pointer-events-none overflow-hidden">
+         <div className="absolute top-[-20%] left-[-10%] w-[600px] h-[600px] bg-cyan-600/5 rounded-full blur-[100px] animate-pulse"></div>
+         <div className="absolute bottom-[-20%] right-[-10%] w-[600px] h-[600px] bg-blue-600/5 rounded-full blur-[100px] animate-pulse" style={{ animationDelay: '2s' }}></div>
+      </div>
+
+      {/* Header */}
+      <header className="h-[72px] shrink-0 border-b border-slate-800/50 bg-[#050B14]/80 backdrop-blur-md z-50 px-6 flex items-center justify-between">
+        <div className="flex items-center gap-3 cursor-pointer" onClick={() => setView('home')}>
+          <Brain className="w-8 h-8 text-cyan-400" />
+          <h1 className="text-2xl font-black tracking-tight">NEURO-SCAN <span className="text-cyan-400">AI</span></h1>
+        </div>
+        <div className="flex items-center gap-2 text-xs font-semibold text-slate-500 uppercase tracking-widest border border-slate-800/50 px-4 py-2 rounded-full">
+          <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
+          RESEARCH PIPELINE: ACTIVE
+        </div>
+      </header>
+
+      {/* Main Content */}
+      <main className="flex-1 overflow-hidden relative z-10 p-6 flex flex-col">
+        
+        {/* VIEW 1: HOME */}
+        {view === 'home' && (
+          <>
+            <div className="absolute inset-0 z-0 overflow-hidden pointer-events-none">
+              {particles.map((p) => (
+                <div
+                  key={p.id}
+                  className="particle"
+                  style={{
+                    width: `${p.size}px`,
+                    height: `${p.size}px`,
+                    left: `${p.left}%`,
+                    top: `${p.top}vh`,
+                    animationDuration: `${p.duration}s`,
+                    animationDelay: `${p.delay}s`,
+                    '--max-opacity': p.opacity,
+                    boxShadow: `0 0 ${p.size * 2}px #22d3ee`
+                  } as React.CSSProperties}
+                ></div>
+              ))}
+            </div>
+
+            <div className="h-full flex flex-col items-center justify-center animate-in fade-in zoom-in-95 duration-500 relative z-10">
+              <div className="text-center space-y-6 max-w-3xl">
+                <Activity className="w-16 h-16 text-cyan-400 mx-auto mb-4" />
+                <h2 className="text-6xl font-extrabold tracking-tight">
+                  Welcome, <span className="text-cyan-400">Doctor</span>
+                </h2>
+                <p className="text-lg text-slate-400">
+                  Securely analyze neuro-diagnostics and brainwave patterns.
+                </p>
+                <div className="flex justify-center gap-6 pt-8">
+                  <button onClick={startNewPatient} className="flex items-center gap-3 px-8 py-4 bg-cyan-600 hover:bg-cyan-500 text-white rounded-xl font-bold text-lg transition-all shadow-lg shadow-cyan-900/20 hover:-translate-y-1">
+                    <PlusCircle className="w-6 h-6" /> Create New Folder
+                  </button>
+                  <button onClick={openExistingFolder} className="flex items-center gap-3 px-8 py-4 bg-[#0B1221] hover:bg-slate-800 text-white border border-slate-800/50 rounded-xl font-bold text-lg transition-all hover:-translate-y-1">
+                    <FolderOpen className="w-6 h-6 text-cyan-400" /> Open Folder
+                  </button>
+                </div>
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* VIEW 2: FORM */}
+        {view === 'form' && (
+          <div className="h-full flex flex-col items-center justify-center animate-in fade-in duration-300">
+            <div className="w-full max-w-2xl bg-[#0B1221] border border-slate-800/50 rounded-2xl p-8 shadow-xl relative z-10">
+              <div className="flex justify-between items-center mb-6">
+                <h3 className="text-2xl font-bold">Clinical Intake</h3>
+                <button onClick={() => setView('home')} className="text-slate-500 hover:text-white flex items-center gap-1 text-sm transition-colors">
+                  <ArrowLeft className="w-4 h-4" /> Cancel
+                </button>
+              </div>
+              
+              <div className="space-y-6">
+                <div>
+                  <label className="block text-sm font-medium text-slate-400 mb-2">Patient Full Name</label>
+                  <input type="text" value={patientName} onChange={(e) => setPatientName(e.target.value)} className="w-full px-4 py-3 bg-[#050B14] border border-slate-800/50 rounded-lg focus:border-cyan-500 outline-none text-white" placeholder="Enter name" />
+                </div>
+                <div className="grid grid-cols-2 gap-6">
+                  <div>
+                    <label className="block text-sm font-medium text-slate-400 mb-2">Age (Years)</label>
+                    <input type="number" value={patientAge} onChange={(e) => setPatientAge(e.target.value)} className="w-full px-4 py-3 bg-[#050B14] border border-slate-800/50 rounded-lg focus:border-cyan-500 outline-none text-white" placeholder="e.g. 35" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-400 mb-2">Gender</label>
+                    <select value={patientGender} onChange={(e) => setPatientGender(e.target.value)} className="w-full px-4 py-3 bg-[#050B14] border border-slate-800/50 rounded-lg focus:border-cyan-500 outline-none text-white">
+                      <option value="">Select</option>
+                      <option value="Male">Male</option>
+                      <option value="Female">Female</option>
+                    </select>
+                  </div>
+                </div>
+                <div className="pt-4 border-t border-slate-800/50">
+                  <label className="flex flex-col items-center justify-center h-40 w-full border-2 border-dashed border-slate-700 rounded-xl cursor-pointer hover:border-cyan-500 hover:bg-[#050B14]/50 transition-all">
+                    <Upload className="w-10 h-10 text-slate-500 mb-3" />
+                    <span className="text-base font-semibold">{file ? file.name : "Upload EEG Dataset (.csv)"}</span>
+                    <input type="file" className="hidden" accept=".csv" onChange={handleUpload} />
+                  </label>
+                </div>
+                {loading && (
+                  <div className="flex items-center justify-center gap-3 text-cyan-400 font-semibold animate-pulse">
+                     <Activity className="animate-spin" /> Processing Neural Data...
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* VIEW 3: RESULT */}
+        {view === 'result' && result && (
+          <div className="h-full flex flex-col gap-6 animate-in fade-in duration-500 min-h-0 relative z-10">
+             
+             {/* TOP BAR: Download & Info */}
+             <div className="shrink-0 flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                   <button onClick={() => setView('form')} className="p-2 bg-[#0B1221] border border-slate-800/50 rounded-lg hover:bg-slate-800 transition-all text-slate-400 hover:text-white">
+                      <ArrowLeft className="w-5 h-5" />
+                   </button>
+                   <div className="text-sm text-slate-400">
+                     Name: <span className="text-white mr-3">{patientName || 'N/A'}</span> 
+                     Age: <span className="text-white mr-3">{patientAge || 'N/A'}</span> 
+                     Gender: <span className="text-white mr-3">{patientGender || 'N/A'}</span>
+                     ID: <span className="text-cyan-400">{patientId}</span>
+                   </div>
+                </div>
+                <button onClick={generatePDF} className="flex items-center gap-2 px-5 py-2.5 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg font-semibold transition-all shadow-md text-sm hover:-translate-y-1">
+                   <Download className="w-4 h-4" /> Download Clinical Report
+                </button>
+             </div>
+
+             {/* DASHBOARD GRID: Left (30%) & Right (70%) */}
+             <div className="flex-1 flex gap-6 min-h-0">
+                
+                {/* LEFT COLUMN: Score & Logic */}
+                <div className="w-[30%] flex flex-col gap-6 min-h-0">
+                   
+                   {/* NEURAL INTEGRITY SCORE */}
+                   <div className={`p-8 rounded-[2rem] border shrink-0 ${result.risk_score > 50 ? 'bg-red-950/20 border-red-900/50' : 'bg-green-950/10 border-green-900/50'}`}>
+                      <p className="text-[10px] text-slate-400 font-bold uppercase tracking-[0.2em] mb-6 border-b border-slate-800/50 pb-2">Neural Integrity Score</p>
+                      <div className="flex items-center gap-4 mb-4">
+                        <span className="text-7xl font-black">{result.risk_score}%</span>
+                        <div className={`px-4 py-1.5 rounded-full text-xs font-black tracking-wider ${result.risk_score > 50 ? 'bg-red-500 text-white' : 'bg-green-500 text-white'}`}>
+                           {result.risk_score > 50 ? 'CRITICAL' : 'SAFE'}
+                        </div>
+                      </div>
+                      <p className="text-sm text-slate-300 font-medium">
+                        {result.risk_score > 50 ? 'High probability of abnormal biomarkers detected.' : 'Normal neurological patterns observed.'}
+                      </p>
+                   </div>
+
+                   {/* DIAGNOSIS LOGIC */}
+                   <div className="bg-[#0B1221] border border-slate-800/50 p-8 rounded-[2rem] flex-1 flex flex-col min-h-0">
+                      <h4 className="font-bold flex items-center gap-2 mb-6 uppercase text-sm tracking-wider">
+                         <FileText className="w-5 h-5 text-cyan-400" /> Diagnosis Logic
+                      </h4>
+                      <div className="p-5 bg-[#050B14] rounded-xl border border-slate-800/50 flex flex-col gap-2 mb-6">
+                         <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Gamma/Alpha Coherence</span>
+                         <span className="text-3xl font-black text-cyan-400">{result.metrics.gamma_alpha_ratio}</span>
+                      </div>
+                      <p className="italic text-xs text-slate-400 leading-relaxed font-serif">
+                        Calculations indicate {activeRegion.desc.toLowerCase()} primarily localized in the {activeRegion.lobe} area based on the extracted frequency bands.
+                      </p>
+                   </div>
+                </div>
+
+                {/* RIGHT COLUMN: Big Graphs (70%) */}
+                <div className="w-[70%] flex flex-col gap-6 min-h-0">
+                   
+                   {/* SIGNAL SIGNATURE ANALYSIS (Top Half) */}
+                   <div className="bg-[#0B1221] border border-slate-800/50 p-6 rounded-[2rem] flex-1 min-h-0 flex flex-col">
+                      <h4 className="font-bold mb-4 shrink-0 flex items-center gap-2 uppercase text-sm tracking-wider">
+                        <Activity className="w-5 h-5 text-cyan-400"/> Signal Signature Analysis
+                      </h4>
+                      <div className="flex-1 min-h-0 w-full">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <AreaChart data={result.chart_data.map((val: any, i: number) => ({ i, val }))} margin={{top: 10, right: 0, left: -20, bottom: 0}}>
+                            <defs>
+                              <linearGradient id="waveGrad" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="5%" stopColor={result.risk_score > 50 ? '#ef4444' : '#10b981'} stopOpacity={0.4}/>
+                                <stop offset="95%" stopColor={result.risk_score > 50 ? '#ef4444' : '#10b981'} stopOpacity={0}/>
+                              </linearGradient>
+                            </defs>
+                            <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} opacity={0.5}/>
+                            <XAxis dataKey="i" hide />
+                            <YAxis stroke="#475569" fontSize={11} tick={{fill: '#475569'}} />
+                            <Tooltip 
+                               contentStyle={{ backgroundColor: '#0f172a', border: '1px solid #1e293b', borderRadius: '8px', color: '#f8fafc' }} 
+                               itemStyle={{ color: '#38bdf8' }}
+                            />
+                            <Area type="monotone" dataKey="val" stroke={result.risk_score > 50 ? '#ef4444' : '#10b981'} strokeWidth={2.5} fillOpacity={1} fill="url(#waveGrad)" />
+                          </AreaChart>
+                        </ResponsiveContainer>
+                      </div>
+                   </div>
+
+                   {/* BOTTOM ROW: Bar & Brain (Bottom Half) */}
+                   <div className="flex-1 flex gap-6 min-h-0">
+                      
+                      {/* POWER SPECTRAL DENSITY */}
+                      <div className="bg-[#0B1221] border border-slate-800/50 p-6 rounded-[2rem] flex-1 flex flex-col min-h-0">
+                         <h4 className="font-bold mb-4 shrink-0 flex items-center gap-2 uppercase text-sm tracking-wider">
+                           <Brain className="w-5 h-5 text-cyan-400"/> Power Spectral Density
+                         </h4>
+                         <div className="flex-1 min-h-0 w-full">
+                            <ResponsiveContainer width="100%" height="100%">
+                               <BarChart data={getBandData()} margin={{top: 10, right: 10, left: -25, bottom: 0}}>
+                                  <defs>
+                                    <linearGradient id="gradBlue" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#3b82f6" stopOpacity={1}/><stop offset="100%" stopColor="#1d4ed8" stopOpacity={0.3}/></linearGradient>
+                                    <linearGradient id="gradGreen" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#22c55e" stopOpacity={1}/><stop offset="100%" stopColor="#15803d" stopOpacity={0.3}/></linearGradient>
+                                    <linearGradient id="gradRed" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#f43f5e" stopOpacity={1}/><stop offset="100%" stopColor="#be123c" stopOpacity={0.3}/></linearGradient>
+                                  </defs>
+                                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} opacity={0.5} />
+                                  <XAxis dataKey="name" stroke="#475569" fontSize={11} tick={{fill: '#475569'}} />
+                                  <YAxis stroke="#475569" fontSize={11} tick={{fill: '#475569'}} />
+                                  <Tooltip 
+                                     cursor={{fill: '#1e293b'}} 
+                                     contentStyle={{ backgroundColor: '#0f172a', border: '1px solid #334155', borderRadius: '8px', color: '#ffffff' }} 
+                                     itemStyle={{ color: '#22d3ee', fontWeight: 'bold' }}
+                                     formatter={(value: number) => value.toFixed(2) + '%'}
+                                  />
+                                  <Bar dataKey="power" radius={[6, 6, 0, 0]} barSize={40}>
+                                     {getBandData().map((entry, index) => (
+                                       <Cell key={`cell-${index}`} fill={entry.name === 'Gamma' ? 'url(#gradRed)' : entry.name === 'Alpha' ? 'url(#gradGreen)' : 'url(#gradBlue)'} />
+                                     ))}
+                                  </Bar>
+                               </BarChart>
+                            </ResponsiveContainer>
+                         </div>
+                      </div>
+
+                      {/* SPATIAL MAP */}
+                      <div className="bg-[#0B1221] border border-slate-800/50 p-6 rounded-[2rem] flex-1 flex flex-col items-center justify-center relative min-h-0">
+                         <h4 className="font-bold absolute top-6 left-6 flex items-center gap-2 uppercase text-sm tracking-wider text-slate-400 z-20">
+                           <Scan className="w-5 h-5 text-slate-400"/> Spatial Map
+                         </h4>
+                         
+                         {/* Brain Top View UI */}
+                         <div className="relative w-44 h-48 flex-shrink-0 mt-2">
+                            <div className="absolute inset-0 rounded-[50%] border-2 border-slate-700/50 bg-[#050B14]"></div>
+                            <div className="absolute -top-3 left-1/2 -translate-x-1/2 w-6 h-6 border-t-2 border-r-2 border-slate-700/50 rotate-[-45deg] bg-[#050B14] rounded-sm"></div>
+                            <div className="absolute top-1/2 -left-2 -translate-y-1/2 w-2 h-10 border-2 border-slate-700/50 border-r-0 rounded-l-full bg-[#050B14]"></div>
+                            <div className="absolute top-1/2 -right-2 -translate-y-1/2 w-2 h-10 border-2 border-slate-700/50 border-l-0 rounded-r-full bg-[#050B14]"></div>
+                            <div className="absolute top-0 bottom-0 left-1/2 w-[1px] bg-slate-700/50 -translate-x-1/2"></div>
+                            <div className="absolute left-0 right-0 top-1/2 h-[1px] bg-slate-700/50 -translate-y-1/2"></div>
+
+                            {/* Nodes with Text Labels */}
+                            {mapNodes.map(node => {
+                              const isActive = activeRegion.nodes.includes(node.id);
+                              return (
+                                <div key={node.id} className={`absolute flex items-center justify-center ${node.pos}`}>
+                                  {isActive && (
+                                    <div className={`absolute w-14 h-14 rounded-full opacity-30 animate-ping ${activeRegion.color}`}></div>
+                                  )}
+                                  <div className={`w-3 h-3 rounded-full z-10 transition-all ${isActive ? `${activeRegion.color} ${activeRegion.glow} border border-white/50` : 'bg-slate-600'}`}></div>
+                                  <span className={`absolute -top-4 text-[9px] font-bold tracking-wider ${isActive ? 'text-white' : 'text-slate-500'}`}>{node.id}</span>
+                                </div>
+                              );
+                            })}
+                         </div>
+
+                         {/* Active Status Info Box */}
+                         <div className="absolute bottom-6 left-0 right-0 text-center flex flex-col items-center">
+                            <div className={`px-3 py-1 rounded-full border border-slate-700/50 bg-[#050B14] shadow-lg`}>
+                              <p className={`text-[11px] font-bold uppercase tracking-wider ${activeRegion.text}`}>
+                                {activeRegion.lobe} Active
+                              </p>
+                              <p className="text-[9px] text-slate-400 font-medium">
+                                Nodes: {activeRegion.nodes.join(', ')} | {activeRegion.desc}
+                              </p>
+                            </div>
+                         </div>
+                      </div>
+
+                   </div>
+                </div>
+             </div>
+          </div>
+        )}
+      </main>
+
+      {/* ORIGINAL HIDDEN PRINTABLE CLINICAL REPORT */}
+      {result && (
+        <div className="absolute top-[-10000px] left-[-10000px] w-[800px] bg-white text-slate-900 p-12 font-sans" ref={printReportRef}>
+          <div className="border-b-2 border-slate-800 pb-6 mb-8 flex justify-between items-end">
+            <div>
+              <h1 className="text-3xl font-extrabold text-slate-900 flex items-center gap-2">
+                NEURO-SCAN <span className="text-blue-600">AI</span>
+              </h1>
+              <p className="text-slate-500 mt-1 font-medium">Automated EEG Clinical Analysis Report</p>
+            </div>
+            <div className="text-right text-sm text-slate-500">
+              <p>Date: {new Date().toLocaleDateString()}</p>
+              <p>Time: {new Date().toLocaleTimeString()}</p>
+            </div>
+          </div>
+          <div className="mb-10">
+            <h2 className="text-lg font-bold text-slate-800 mb-3 uppercase tracking-wider border-b pb-1 border-slate-200">Patient Information</h2>
+            <div className="grid grid-cols-2 gap-4 bg-slate-50 p-4 rounded-lg border border-slate-200">
+              <div><span className="font-semibold text-slate-600">Patient ID:</span> {patientId}</div>
+              <div><span className="font-semibold text-slate-600">Full Name:</span> {patientName || 'Not Provided'}</div>
+              <div><span className="font-semibold text-slate-600">Age:</span> {patientAge ? `${patientAge} Years` : 'Not Provided'}</div>
+              <div><span className="font-semibold text-slate-600">Gender:</span> {patientGender || 'Not Provided'}</div>
+            </div>
+          </div>
+          <div className={`mb-10 p-6 rounded-lg border-2 ${result.risk_score > 50 ? 'bg-red-50 border-red-200' : 'bg-green-50 border-green-200'}`}>
+            <h2 className="text-sm font-bold text-slate-600 uppercase tracking-wider mb-2">Primary Assessment Risk Score</h2>
+            <div className="flex items-center gap-4">
+              <div className={`text-5xl font-extrabold ${result.risk_score > 50 ? 'text-red-600' : 'text-green-600'}`}>
+                {result.risk_score}%
+              </div>
+              <div className="text-lg font-medium text-slate-700">
+                {result.risk_score > 50 ? 'High Risk of Neurological Abnormality' : 'Normal Brainwave Activity'}
+              </div>
+            </div>
+          </div>
+          <div className="mb-10">
+            <h2 className="text-lg font-bold text-slate-800 mb-3 uppercase tracking-wider border-b pb-1 border-slate-200">Clinical Explanation</h2>
+            <div className="text-slate-700 leading-relaxed text-base text-justify">
+              <p className="mb-4">
+                This report analyzes the electrical activity of the brain (EEG) to detect unusual patterns. The AI system specifically looks at the ratio between <strong>Gamma waves</strong> (fast, active processing waves) and <strong>Alpha waves</strong> (relaxed, resting waves).
+              </p>
+              {result.risk_score > 50 ? (
+                <p className="p-4 bg-red-50 text-red-900 border-l-4 border-red-500">
+                  <strong>What this result means:</strong> The system detected that the Gamma wave activity is unusually high compared to the Alpha waves (Calculated Ratio: {result.metrics.gamma_alpha_ratio}). In clinical neuroscience, this specific type of "hyper-connectivity" or overactivity is an established biomarker often associated with conditions like Schizophrenia.
+                </p>
+              ) : (
+                <p className="p-4 bg-green-50 text-green-900 border-l-4 border-green-500">
+                  <strong>What this result means:</strong> The system found that the brain frequencies are in a healthy, expected balance (Calculated Ratio: {result.metrics.gamma_alpha_ratio}). The resting Alpha waves dominate properly, and there is no abnormal spike in the high-frequency Gamma range. Spatial mapping confirms resting dominance in the {activeRegion.lobe}.
+                </p>
+              )}
+            </div>
+          </div>
+          <div className="mb-10">
+            <h2 className="text-lg font-bold text-slate-800 mb-3 uppercase tracking-wider border-b pb-1 border-slate-200">Technical Metrics</h2>
+            <div className="grid grid-cols-2 gap-x-8 gap-y-2 text-sm text-slate-600">
+              <div className="flex justify-between border-b border-slate-100 py-1"><span>Delta Power:</span> <strong>{(result.metrics.bands_relative_power.Delta * 100).toFixed(2)}%</strong></div>
+              <div className="flex justify-between border-b border-slate-100 py-1"><span>Theta Power:</span> <strong>{(result.metrics.bands_relative_power.Theta * 100).toFixed(2)}%</strong></div>
+              <div className="flex justify-between border-b border-slate-100 py-1"><span>Alpha Power:</span> <strong>{(result.metrics.bands_relative_power.Alpha * 100).toFixed(2)}%</strong></div>
+              <div className="flex justify-between border-b border-slate-100 py-1"><span>Beta Power:</span> <strong>{(result.metrics.bands_relative_power.Beta * 100).toFixed(2)}%</strong></div>
+              <div className="flex justify-between border-b border-slate-100 py-1"><span>Gamma Power:</span> <strong className="text-blue-600">{(result.metrics.bands_relative_power.Gamma * 100).toFixed(2)}%</strong></div>
+              <div className="flex justify-between border-b border-slate-100 py-1"><span>Gamma/Alpha Ratio:</span> <strong className="text-blue-600">{result.metrics.gamma_alpha_ratio}</strong></div>
+            </div>
+          </div>
+          <div className="mt-16 pt-4 border-t border-slate-200 text-xs text-slate-400 text-center">
+            <p><strong>Disclaimer:</strong> Neuro-Scan AI is an experimental AI screening tool designed for rapid initial assessment. It is not a substitute for professional medical diagnosis.</p>
+            <p className="mt-1">Generated by Neuro-Scan AI Engine v1.0</p>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default App;
